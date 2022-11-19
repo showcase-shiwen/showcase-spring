@@ -1,14 +1,18 @@
 package org.showcase.spring.core;
 
-import org.showcase.spring.service.UserBean;
-import org.showcase.spring.core.annotation.Component;
-import org.showcase.spring.core.annotation.ComponentScan;
-import org.showcase.spring.core.annotation.Scope;
+import org.showcase.spring.core.annotation.*;
+import org.showcase.spring.core.bean.BeanNameAware;
+import org.showcase.spring.core.bean.BeanPostProcessor;
+import org.showcase.spring.core.bean.InitializingBean;
+import org.showcase.spring.core.enums.BeanScope;
 import org.showcase.spring.core.util.StringUtil;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -22,6 +26,8 @@ public class ApplicationContext {
     //单例池
     private ConcurrentHashMap<String, Object> singletonObjects = new ConcurrentHashMap<>();
 
+    //所有类实例
+    private ConcurrentHashMap<String, Object> instanceObjects = new ConcurrentHashMap<>();
 
 
     public ApplicationContext(Class configClass) {
@@ -39,16 +45,39 @@ public class ApplicationContext {
             ClassLoader classLoader = ApplicationContext.class.getClassLoader();
             URL resource = classLoader.getResource(path);
             File file = new File(resource.getFile());
-            scanClass(file,scanPackageName,classLoader);
 
-            //遍历出单例bean
-            for (String beanName : beanDefinitionMap.keySet()) {
-                BeanDefinition beanDefinition = beanDefinitionMap.get(beanName);
-                if ("singleton".equals(beanDefinition.getScope())){
-                    //将单例bean放入到单例池中
-                    Object bean =  createBean(beanName,beanDefinition);
-                    singletonObjects.put(beanName,bean);
-                }
+            scanClass(file, scanPackageName, classLoader);
+
+            //扫描到的bean 实例化
+            beanDefinitionMapInstance();
+
+
+            //beanRegister
+            beanRegister();
+
+
+        }
+    }
+
+    private void beanRegister() {
+        Set<String> keySet=beanDefinitionMap.keySet();
+        keySet.forEach(beanName->{
+            BeanDefinition beanDefinition=beanDefinitionMap.get(beanName);
+            if(BeanScope.singleton.name().equals(beanDefinition.getScope())){
+               singletonObjects.put(beanName,createBean(beanName,beanDefinition));
+            }
+        });
+        System.out.println("register success");
+    }
+
+    private void beanDefinitionMapInstance() {
+        //遍历出单例bean
+        for (String beanName : beanDefinitionMap.keySet()) {
+            BeanDefinition beanDefinition = beanDefinitionMap.get(beanName);
+            if (BeanScope.singleton.name().equals(beanDefinition.getScope())) {
+                //将单例bean放入到单例池中
+                Object bean = createInstance(beanDefinition.getType());
+                instanceObjects.put(beanName, bean);
             }
         }
     }
@@ -56,9 +85,44 @@ public class ApplicationContext {
     private Object createBean(String beanName, BeanDefinition beanDefinition) {
         //bean 创建
         Class clazz = beanDefinition.getType();
+        Object instance = createInstance(beanDefinition.getType());
+
+        Field[] fields=clazz.getDeclaredFields();
+        for(Field field:fields){
+            try {
+                if(field.isAnnotationPresent(Autowired.class)&&!field.isAnnotationPresent(Lazy.class)){
+                    field.setAccessible(true);
+                    Object bean=singletonObjects.get(field.getName());
+                    if(bean==null){
+                        bean=instanceObjects.get(field.getName());
+                    }
+                    field.set(instance,bean);
+                }
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            }
+        }
+        if (instance instanceof BeanNameAware) {
+            try {
+                ((BeanNameAware) instance).setBeanName(beanName);
+            } catch (Exception e) {
+            }
+        }
+        //初始化
+        if (instance instanceof InitializingBean) {
+            try {
+                ((InitializingBean) instance).afterPropertiesSet();
+            } catch (Exception e) {
+            }
+        }
+
+        return instance;
+    }
+
+    private Object createInstance( Class clazz) {
         try {
             Object instance = clazz.getConstructor().newInstance();
-            return instance;
+           return instance;
         } catch (InstantiationException e) {
             e.printStackTrace();
         } catch (IllegalAccessException e) {
@@ -75,9 +139,9 @@ public class ApplicationContext {
         if (file.isDirectory()) {
             File[] files = file.listFiles();
             for (File f : files) {
-                if(f.isDirectory()){
-                    scanClass(f,scanPackageName,classLoader);
-                }else{
+                if (f.isDirectory()) {
+                    scanClass(f, scanPackageName, classLoader);
+                } else {
                     String fileName = f.getAbsolutePath();
                     if (fileName.endsWith(".class")) {
                         try {
@@ -89,8 +153,8 @@ public class ApplicationContext {
 
                                 Component component = clazz.getAnnotation(Component.class);
                                 String beanName = component.value();
-                                if(StringUtil.isEmpty(beanName)){
-                                   beanName= StringUtil.lowerCaseFirst(clazz.getSimpleName());
+                                if (StringUtil.isEmpty(beanName)) {
+                                    beanName = StringUtil.lowerCaseFirst(clazz.getSimpleName());
                                 }
                                 BeanDefinition beanDefinition = new BeanDefinition();
                                 beanDefinition.setType(clazz);
@@ -98,7 +162,7 @@ public class ApplicationContext {
                                     Scope scopeAnnotation = clazz.getAnnotation(Scope.class);
                                     beanDefinition.setScope(scopeAnnotation.value());
                                 } else {
-                                    beanDefinition.setScope("singleton");
+                                    beanDefinition.setScope(BeanScope.singleton.name());
                                 }
                                 beanDefinitionMap.put(beanName, beanDefinition);
                             }
@@ -121,17 +185,38 @@ public class ApplicationContext {
             throw new NullPointerException();
         } else {
             String scope = beanDefinition.getScope();
-            if ("singleton".equals(scope)){
+            if (BeanScope.singleton.name().equals(scope)) {
                 //单例
                 Object bean = singletonObjects.get(beanName);
-                if (bean == null){
-                    Object o = createBean(beanName,beanDefinition);
-                    singletonObjects.put(beanName,0);
+
+
+                if (bean == null) {
+                    bean= createBean(beanName, beanDefinition);
+                    singletonObjects.put(beanName,bean);
                 }
+                //懒加载逻辑
+//                boolean lazy=false;
+//
+//                Field[] fields=beanDefinition.getType().getDeclaredFields();
+//                for(Field field:fields){
+//                    if(field.isAnnotationPresent(Lazy.class)){
+//                        lazy=true;
+//                        field.setAccessible(true);
+//                        try {
+//                            field.set(bean,getBean(field.getName()));
+//                        } catch (IllegalAccessException e) {
+//                            e.printStackTrace();
+//                        }
+//                    }
+//                }
+//                if(lazy){
+//                    singletonObjects.put(beanName,bean);
+//                }
+
                 return bean;
-            }else{
+            } else {
                 //多例
-                return createBean(beanName,beanDefinition);
+                return createBean(beanName, beanDefinition);
             }
         }
     }
