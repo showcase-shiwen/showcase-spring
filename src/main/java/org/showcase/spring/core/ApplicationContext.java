@@ -19,8 +19,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * 参照  https://blog.csdn.net/weixin_44235759/article/details/123634022
  */
 public class ApplicationContext {
+
     private Class configClass;
 
+    //扫描所有注解类
     private ConcurrentHashMap<String, BeanDefinition> beanDefinitionMap = new ConcurrentHashMap<>();
 
     //单例池
@@ -35,7 +37,9 @@ public class ApplicationContext {
 
         if (configClass.isAnnotationPresent(ComponentScan.class)) {
             ComponentScan componentScanAnnotation = (ComponentScan) configClass.getAnnotation(ComponentScan.class);
-            String scanPackageName = componentScanAnnotation.value();//扫描路径
+            //扫描路径
+            String scanPackageName = componentScanAnnotation.value();
+
             if (StringUtil.isEmpty(scanPackageName)) {
                 scanPackageName = configClass.getPackage().getName();
             }
@@ -50,7 +54,6 @@ public class ApplicationContext {
 
             //扫描到的bean 实例化
             beanDefinitionMapInstance();
-
 
             //beanRegister
             beanRegister();
@@ -85,12 +88,16 @@ public class ApplicationContext {
     private Object createBean(String beanName, BeanDefinition beanDefinition) {
         //bean 创建
         Class clazz = beanDefinition.getType();
-        Object instance = createInstance(beanDefinition.getType());
+        Object instance = instanceObjects.get(beanName);
+        if(instance==null){
+            instance=createInstance(clazz);
+        }
 
         Field[] fields=clazz.getDeclaredFields();
         for(Field field:fields){
             try {
-                if(field.isAnnotationPresent(Autowired.class)&&!field.isAnnotationPresent(Lazy.class)){
+                if(field.isAnnotationPresent(Autowired.class)&&field.isAnnotationPresent(Lazy.class)){
+//                if(field.isAnnotationPresent(Autowired.class)&&!field.isAnnotationPresent(Lazy.class)){
                     field.setAccessible(true);
                     Object bean=singletonObjects.get(field.getName());
                     if(bean==null){
@@ -146,7 +153,7 @@ public class ApplicationContext {
                     if (fileName.endsWith(".class")) {
                         try {
                             String className = fileName.substring(fileName.indexOf(scanPackageName.split("\\.")[0]), fileName.indexOf(".class"));
-                            className = className.replace("\\", ".");
+                            className = className.replaceAll("\\/", ".");
                             Class<?> clazz = classLoader.loadClass(className);
 
                             if (clazz.isAnnotationPresent(Component.class)) {

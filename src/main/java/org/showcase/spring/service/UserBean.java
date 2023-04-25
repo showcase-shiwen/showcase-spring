@@ -1,6 +1,7 @@
 package org.showcase.spring.service;
 
 import org.showcase.spring.core.annotation.Autowired;
+import org.showcase.spring.core.annotation.Lazy;
 import org.showcase.spring.core.bean.InitializingBean;
 import org.showcase.spring.core.bean.BeanNameAware;
 import org.showcase.spring.core.annotation.Component;
@@ -8,7 +9,9 @@ import org.showcase.spring.core.annotation.Component;
 @Component
 public class UserBean implements BeanNameAware, InitializingBean {
     private String beanName;
+
     @Autowired
+    @Lazy
     private RoleBean roleBean;
 
     public void list() {
